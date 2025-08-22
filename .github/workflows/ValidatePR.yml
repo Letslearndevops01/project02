@@ -1,0 +1,59 @@
+# Validate commit messages in PRs and pushes to main
+
+name: Validate Commit Messages
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  push:
+    branches:
+      - main
+
+jobs:
+  validate-commits:
+    name: Validate Commit Messages   # 👈 job name matches workflow name
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Get commit messages
+        id: commits
+        run: |
+          echo "Getting commit messages..."
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            commits=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "${{ github.api_url }}/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits" \
+              | jq -r '.[].commit.message | split("\n")[0]')
+          else
+            commits=$(git log -1 --pretty=%s)
+          fi
+          echo "$commits" > commit_messages.txt
+
+      - name: Validate commit messages contain Jira ticket
+        run: |
+          echo "Validating commit messages..."
+          error=0
+          while IFS= read -r line; do
+            # Skip auto-generated merge commits
+            if [[ "$line" =~ ^Merge ]]; then
+              echo "ℹ️  Skipping auto-generated commit: $line"
+              continue
+            fi
+
+            # Check Jira format
+            if [[ "$line" =~ ^DEVOPS1-([1-9][0-9]?|100):\ .+ ]]; then
+              echo "✅ Valid: $line"
+            else
+              echo "❌ Invalid commit message: $line"
+              error=1
+            fi
+          done < commit_messages.txt
+
+          if [ $error -ne 0 ]; then
+            echo "✖ One or more commit messages are invalid."
+            exit 1
+          else
+            echo "✔ All commit messages are valid."
+          fi
